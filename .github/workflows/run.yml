@@ -26,15 +26,6 @@ jobs:
         today=$(date -u "+%Y-%m-%d")
         echo "开始爬取 $today 的arXiv论文... / Starting to crawl $today arXiv papers..."
         
-        echo "=== 当前目录状态 ==="
-        echo "当前目录: $(pwd)"
-        echo "目录内容:"
-        ls -la
-        echo "=== Current directory status ==="
-        echo "Current directory: $(pwd)"
-        echo "Directory contents:"
-        ls -la
-        
         # 检查今日文件是否已存在，如存在则删除 / Check if today's file exists, delete if found
         if [ -f "data/${today}.jsonl" ]; then
             echo "🗑️ 发现今日文件已存在，正在删除重新生成... / Found existing today's file, deleting for fresh start..."
@@ -45,12 +36,6 @@ jobs:
         fi
         
         cd daily_arxiv
-        
-        echo "=== 进入daily_arxiv目录后 ==="
-        echo "当前目录: $(pwd)"
-        echo "=== After entering daily_arxiv directory ==="
-        echo "Current directory: $(pwd)"
-        
         export OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
         export OPENAI_BASE_URL=${{ secrets.OPENAI_BASE_URL }}
         export TOKEN_GITHUB=${{ secrets.TOKEN_GITHUB }}
@@ -58,41 +43,18 @@ jobs:
         export CATEGORIES="${{ vars.CATEGORIES }}"
         export MODEL_NAME="${{ vars.MODEL_NAME }}"
         
-        # ========== 关键修复：确保父目录存在 ==========
-        # ========== CRITICAL FIX: Ensure parent directory exists ==========
-        echo "创建../data目录... / Creating ../data directory..."
-        mkdir -p ../data
-        
-        echo "验证目录创建... / Verifying directory creation..."
-        echo "data目录路径: $(realpath ../data 2>/dev/null || echo '无法解析路径')"
-        echo "data目录是否存在: $([ -d "../data" ] && echo "是/Yes" || echo "否/No")"
-        echo "data目录权限:"
-        ls -ld ../data
-        
-        # 显示目标文件路径 / Show target file path
-        TARGET_FILE="../data/${today}.jsonl"
-        echo "目标文件: $TARGET_FILE / Target file: $TARGET_FILE"
-        
-        # 使用Scrapy爬取 / Use Scrapy to crawl
-        echo "启动Scrapy爬虫... / Starting Scrapy spider..."
-        scrapy crawl arxiv -o "$TARGET_FILE"
+        # 使用Scrapy爬取
+        # Use Scrapy to crawl
+        scrapy crawl arxiv -o ../data/${today}.jsonl
         
         # 检查爬取是否成功 / Check if crawling was successful
-        if [ ! -f "$TARGET_FILE" ]; then
-            echo "❌ 爬取失败，未生成数据文件 / Crawling failed, no data file generated"
-            echo "检查文件是否存在: $([ -f "$TARGET_FILE" ] && echo "是/Yes" || echo "否/No")"
+        if [ ! -f "../data/${today}.jsonl" ]; then
+            echo "爬取失败，未生成数据文件 / Crawling failed, no data file generated"
             exit 1
         fi
         
-        # 验证文件 / Validate file
-        echo "✅ 文件生成成功 / File generated successfully"
-        echo "文件路径: $(realpath "$TARGET_FILE" 2>/dev/null || echo "$TARGET_FILE")"
-        echo "文件大小: $(wc -l <"$TARGET_FILE") 行 / File size: $(wc -l <"$TARGET_FILE") lines"
-        echo "文件前3行内容: / First 3 lines of file:"
-        head -3 "$TARGET_FILE"
-        
         echo "crawl_date=$today" >> $GITHUB_OUTPUT
-        echo "🎉 爬取完成！ / Crawling completed!"
+        echo "爬取完成 / Crawling completed"
         
     - name: Check for duplicates
       id: dedup_check
