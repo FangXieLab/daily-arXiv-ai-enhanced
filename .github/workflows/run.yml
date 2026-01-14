@@ -19,14 +19,6 @@ jobs:
         curl -LsSf https://astral.sh/uv/install.sh | sh
         uv sync
         
-    - name: Ensure directories exist
-      run: |
-        echo "确保data和assets文件夹存在..."
-        mkdir -p data
-        mkdir -p assets
-        touch .nojekyll
-        echo "✅ 目录准备完成"
-        
     - name: Crawl arXiv papers
       id: crawl_step
       run: |
