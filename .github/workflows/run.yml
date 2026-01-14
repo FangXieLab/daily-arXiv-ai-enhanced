@@ -43,8 +43,11 @@ jobs:
         export CATEGORIES="${{ vars.CATEGORIES }}"
         export MODEL_NAME="${{ vars.MODEL_NAME }}"
         
-        # 使用Scrapy爬取 / Use Scrapy to crawl
-        scrapy crawl arxiv -o ../data/${today}.jsonl
+        # 确保输出目录存在 / Ensure output directory exists
+        mkdir -p ../data
+        
+        # 使用FEEDS设置而不是-o选项 / Use FEEDS setting instead of -o option
+        scrapy crawl arxiv -s FEED_URI="file://$(pwd)/../data/${today}.jsonl" -s FEED_FORMAT=jsonlines
         
         # 检查爬取是否成功 / Check if crawling was successful
         if [ ! -f "../data/${today}.jsonl" ]; then
