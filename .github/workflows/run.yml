@@ -19,15 +19,12 @@ jobs:
         curl -LsSf https://astral.sh/uv/install.sh | sh
         uv sync
         
-     - name: Crawl arXiv papers
+    - name: Crawl arXiv papers
       id: crawl_step
       run: |
         source .venv/bin/activate
         today=$(date -u "+%Y-%m-%d")
         echo "开始爬取 $today 的arXiv论文... / Starting to crawl $today arXiv papers..."
-        
-        # 确保data目录存在 / Ensure data directory exists
-        mkdir -p data
         
         cd daily_arxiv
         export OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
@@ -37,95 +34,26 @@ jobs:
         export CATEGORIES="${{ vars.CATEGORIES }}"
         export MODEL_NAME="${{ vars.MODEL_NAME }}"
         
-        # 创建Python脚本手动控制输出 / Create Python script to manually control output
-        cat > run_crawl.py << 'EOF'
-        import json
-        import sys
-        import os
-        from datetime import datetime
+        # 最简单的解决方案：先爬取到临时文件，然后重命名
+        # Simplest solution: crawl to temp file, then rename
+        TEMP_FILE="/tmp/arxiv_${today}.jsonl"
+        OUTPUT_FILE="../data/${today}.jsonl"
         
-        # 添加当前目录到Python路径 / Add current directory to Python path
-        sys.path.insert(0, os.path.dirname(__file__))
+        # 确保输出目录存在 / Ensure output directory exists
+        mkdir -p ../data 2>/dev/null || true
         
-        from scrapy.crawler import CrawlerRunner
-        from scrapy.utils.project import get_project_settings
-        from twisted.internet import reactor, defer
+        # 运行Scrapy到临时文件 / Run Scrapy to temp file
+        scrapy crawl arxiv -o "$TEMP_FILE"
         
-        # 自定义Item收集器 / Custom Item collector
-        class ItemCollector:
-            def __init__(self, output_file):
-                self.output_file = output_file
-                self.items = []
-                
-            def process_item(self, item, spider):
-                self.items.append(dict(item))
-                # 立即写入文件（追加模式） / Write to file immediately (append mode)
-                with open(self.output_file, 'a', encoding='utf-8') as f:
-                    f.write(json.dumps(dict(item), ensure_ascii=False) + '\n')
-                return item
-        
-        @defer.inlineCallbacks
-        def crawl():
-            # 获取今天的日期 / Get today's date
-            today = datetime.utcnow().strftime('%Y-%m-%d')
-            
-            # 设置输出文件路径 / Set output file path
-            output_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
-            os.makedirs(output_dir, exist_ok=True)
-            output_file = os.path.join(output_dir, f'{today}.jsonl')
-            
-            print(f"输出文件: {output_file}")
-            print(f"Output file: {output_file}")
-            
-            # 如果文件已存在，删除它 / If file exists, delete it
-            if os.path.exists(output_file):
-                os.remove(output_file)
-            
-            # 创建Item收集器 / Create item collector
-            collector = ItemCollector(output_file)
-            
-            # 获取Scrapy设置 / Get Scrapy settings
-            settings = get_project_settings()
-            
-            # 添加自定义pipeline / Add custom pipeline
-            settings.set('ITEM_PIPELINES', {
-                'daily_arxiv.pipelines.DailyArxivPipeline': 300,
-            })
-            
-            # 创建爬虫运行器 / Create crawler runner
-            runner = CrawlerRunner(settings)
-            
-            # 运行爬虫 / Run spider
-            spider = runner.create_crawler('arxiv')
-            
-            # 添加Item处理器 / Add item processor
-            spider.signals.connect(collector.process_item, signal=spider.signals.item_scraped)
-            
-            yield runner.crawl('arxiv')
-            
-            print(f"爬取完成，共收集 {len(collector.items)} 个条目")
-            print(f"Crawling completed, collected {len(collector.items)} items")
-            
-            # 停止reactor / Stop reactor
-            reactor.stop()
-        
-        if __name__ == '__main__':
-            crawl()
-            reactor.run()
-        EOF
-        
-        # 运行Python脚本 / Run Python script
-        python run_crawl.py
-        
-        # 检查是否生成文件 / Check if file was generated
-        if [ ! -f "../data/${today}.jsonl" ]; then
-            echo "爬取失败，未生成数据文件 / Crawling failed, no data file generated"
+        # 如果成功，移动到目标位置 / If successful, move to target location
+        if [ -f "$TEMP_FILE" ]; then
+            mv "$TEMP_FILE" "$OUTPUT_FILE"
+            echo "✅ 文件已保存到: $OUTPUT_FILE"
+            echo "✅ File saved to: $OUTPUT_FILE"
+        else
+            echo "❌ 爬取失败 / Crawling failed"
             exit 1
         fi
-        
-        # 检查文件内容 / Check file content
-        LINE_COUNT=$(wc -l <"../data/${today}.jsonl" 2>/dev/null || echo "0")
-        echo "✅ 生成文件包含 $LINE_COUNT 行数据 / Generated file contains $LINE_COUNT lines of data"
         
         echo "crawl_date=$today" >> $GITHUB_OUTPUT
         echo "爬取完成 / Crawling completed"
