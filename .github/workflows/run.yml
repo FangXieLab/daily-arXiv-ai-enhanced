@@ -26,6 +26,9 @@ jobs:
         today=$(date -u "+%Y-%m-%d")
         echo "开始爬取 $today 的arXiv论文... / Starting to crawl $today arXiv papers..."
         
+        # 确保data目录存在 / Ensure data directory exists
+        mkdir -p data
+        
         cd daily_arxiv
         export OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
         export OPENAI_BASE_URL=${{ secrets.OPENAI_BASE_URL }}
@@ -34,24 +37,112 @@ jobs:
         export CATEGORIES="${{ vars.CATEGORIES }}"
         export MODEL_NAME="${{ vars.MODEL_NAME }}"
         
-        # 最简单的解决方案：先爬取到临时文件，然后重命名
-        # Simplest solution: crawl to temp file, then rename
-        TEMP_FILE="/tmp/arxiv_${today}.jsonl"
-        OUTPUT_FILE="../data/${today}.jsonl"
+        # 创建Python爬取脚本 / Create Python crawling script
+        cat > crawl_without_feed.py << 'EOF'
+        import json
+        import sys
+        import os
+        from datetime import datetime
+        from scrapy.crawler import CrawlerProcess
+        from scrapy.utils.project import get_project_settings
         
-        # 确保输出目录存在 / Ensure output directory exists
-        mkdir -p ../data 2>/dev/null || true
+        # 自定义JSON导出器 / Custom JSON exporter
+        class JsonLineExporter:
+            def __init__(self, output_path):
+                self.output_path = output_path
+                self.file = None
+                
+            def open(self):
+                # 确保目录存在 / Ensure directory exists
+                os.makedirs(os.path.dirname(self.output_path), exist_ok=True)
+                # 打开文件用于写入 / Open file for writing
+                self.file = open(self.output_path, 'w', encoding='utf-8')
+                return self
+                
+            def export_item(self, item):
+                # 写入一行JSON / Write one line of JSON
+                if self.file:
+                    self.file.write(json.dumps(dict(item), ensure_ascii=False) + '\n')
+                    
+            def close(self):
+                # 关闭文件 / Close file
+                if self.file:
+                    self.file.close()
         
-        # 运行Scrapy到临时文件 / Run Scrapy to temp file
-        scrapy crawl arxiv -o "$TEMP_FILE"
+        # 自定义Pipeline / Custom Pipeline
+        class JsonExportPipeline:
+            def __init__(self, exporter):
+                self.exporter = exporter
+                
+            def open_spider(self, spider):
+                self.exporter.open()
+                
+            def process_item(self, item, spider):
+                self.exporter.export_item(item)
+                return item
+                
+            def close_spider(self, spider):
+                self.exporter.close()
         
-        # 如果成功，移动到目标位置 / If successful, move to target location
-        if [ -f "$TEMP_FILE" ]; then
-            mv "$TEMP_FILE" "$OUTPUT_FILE"
-            echo "✅ 文件已保存到: $OUTPUT_FILE"
-            echo "✅ File saved to: $OUTPUT_FILE"
-        else
-            echo "❌ 爬取失败 / Crawling failed"
+        if __name__ == '__main__':
+            # 获取今天的日期 / Get today's date
+            today = datetime.utcnow().strftime('%Y-%m-%d')
+            
+            # 设置输出文件路径 / Set output file path
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            output_file = os.path.join(project_root, 'data', f'{today}.jsonl')
+            
+            print(f"输出文件: {output_file}")
+            print(f"Output file: {output_file}")
+            
+            # 如果文件已存在，删除它 / If file exists, delete it
+            if os.path.exists(output_file):
+                os.remove(output_file)
+            
+            # 创建导出器 / Create exporter
+            exporter = JsonLineExporter(output_file)
+            
+            # 获取Scrapy设置 / Get Scrapy settings
+            settings = get_project_settings()
+            
+            # 禁用默认的feed exporter / Disable default feed exporter
+            settings.set('FEED_EXPORTERS', {})
+            settings.set('FEED_EXPORT_ENCODING', 'utf-8')
+            
+            # 添加自定义pipeline / Add custom pipeline
+            settings.set('ITEM_PIPELINES', {
+                'daily_arxiv.pipelines.DailyArxivPipeline': 300,
+                '__main__.JsonExportPipeline': 800,
+            })
+            
+            # 创建并运行爬虫 / Create and run crawler
+            process = CrawlerProcess(settings)
+            
+            # 传递exporter给pipeline / Pass exporter to pipeline
+            process.crawl('arxiv', custom_settings={
+                'JSON_EXPORTER': exporter
+            })
+            
+            process.start()
+            
+            # 检查文件是否创建 / Check if file was created
+            if os.path.exists(output_file):
+                with open(output_file, 'r', encoding='utf-8') as f:
+                    line_count = sum(1 for _ in f)
+                print(f"✅ 爬取完成，生成 {line_count} 条记录")
+                print(f"✅ Crawling completed, generated {line_count} records")
+            else:
+                print("❌ 爬取失败，未生成文件")
+                print("❌ Crawling failed, no file generated")
+                sys.exit(1)
+        EOF
+        
+        # 运行自定义爬取脚本 / Run custom crawling script
+        python crawl_without_feed.py
+        
+        # 检查是否生成文件 / Check if file was generated
+        if [ ! -f "../data/${today}.jsonl" ]; then
+            echo "爬取失败，未生成数据文件 / Crawling failed, no data file generated"
             exit 1
         fi
         
