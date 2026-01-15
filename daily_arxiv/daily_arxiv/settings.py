@@ -93,3 +93,22 @@ ITEM_PIPELINES = {
 # Set settings whose default value is deprecated to a future-proof value
 TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
 FEED_EXPORT_ENCODING = "utf-8"
+
+# ========== 修复GitHub Actions爬取问题 ==========
+
+# 1. User-Agent是关键
+USER_AGENT = 'Mozilla/5.0 (arXiv-Daily-Crawler/1.0; GitHub Actions)'
+
+# 2. 添加Accept头
+DEFAULT_REQUEST_HEADERS = {
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+}
+
+# 3. 降低请求速度
+DOWNLOAD_DELAY = 5
+CONCURRENT_REQUESTS = 1
+
+# 4. 重试406错误
+RETRY_ENABLED = True
+RETRY_TIMES = 2
+RETRY_HTTP_CODES = [406, 429, 500, 502, 503, 504]
