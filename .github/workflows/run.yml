@@ -1,19 +1,21 @@
+# This workflow will install Python dependencies, run tests and lint with a single version of Python
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
+
 name: arXiv-daily-ai-enhanced
 
 on:
   schedule:
-    - cron: "0 23 * * *"
+    - cron: "30 1 * * *"
   workflow_dispatch:
+
 
 jobs:
   build:
+
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0  # 获取所有分支历史
-    
     - name: Install dependencies
       run: |
         curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -152,7 +154,7 @@ jobs:
       if: steps.dedup_check.outputs.has_new_content == 'true'
       run: |
         echo "更新文件列表... / Updating file list..."
-        ls data/*.jsonl 2>/dev/null | sed 's|data/||' > assets/file-list.txt
+        ls data/*.jsonl | sed 's|data/||' > assets/file-list.txt
         echo "文件列表更新完成 / File list updated"
 
     - name: Generate password hash and inject into config
@@ -256,8 +258,6 @@ jobs:
 
     - name: Push code changes to main branch
       if: steps.dedup_check.outputs.has_new_content == 'true'
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         # 设置Git配置以处理自动合并 / Set Git config for automatic merging
         git config pull.rebase true
@@ -297,101 +297,76 @@ jobs:
 
     - name: Setup and commit to data branch
       if: steps.dedup_check.outputs.has_new_content == 'true'
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         git config --global user.email "${{ vars.EMAIL }}"
         git config --global user.name "${{ vars.NAME }}"
         
-        echo "=== 设置 data 分支 ==="
+        echo "设置 data 分支... / Setting up data branch..."
         today=${{ steps.crawl_step.outputs.crawl_date }}
         
-        # 清理临时文件
+        # 在切换分支前，清理工作目录中可能冲突的未跟踪文件
+        # Before switching branches, clean untracked files that might conflict
+        # 这些文件已经保存到临时目录，所以可以安全删除
+        # These files are already saved to temporary directory, so safe to remove
         rm -rf data/*.jsonl 2>/dev/null || true
         rm -f assets/file-list.txt 2>/dev/null || true
         
-        # 检查远程data分支是否存在
-        echo "检查远程分支..."
-        if git ls-remote --exit-code origin data >/dev/null 2>&1; then
-          echo "✅ data分支存在，切换到data分支"
-          git fetch origin data
+        # 检查 data 分支是否存在 / Check if data branch exists
+        if git ls-remote --heads origin data | grep -q data; then
+          echo "data 分支已存在，切换到 data 分支 / Data branch exists, switching to data branch"
+          git fetch origin data:data
           git checkout data
-          # 确保是最新版本
-          git pull origin data --no-edit || echo "提示：拉取可能失败，继续..."
+          git pull origin data || true
         else
-          echo "❌ data分支不存在，需要先手动创建"
-          echo "请在GitHub网页上："
-          echo "1. 点击分支下拉框（显示main的地方）"
-          echo "2. 输入'data'然后按Enter"
-          echo "3. 基于main创建data分支"
-          echo "或者运行：git checkout -b data && git push origin data"
-          exit 1
+          echo "data 分支不存在，创建新分支 / Data branch does not exist, creating new branch"
+          # 创建空的 data 分支 / Create empty data branch
+          git checkout --orphan data
+          git rm -rf --cached . 2>/dev/null || true
+          # 确保 data 和 assets 目录存在 / Ensure data and assets directories exist
+          mkdir -p data assets
+          echo "# Data Branch" > README.md
+          git add README.md
+          git commit -m "chore: initialize data branch"
+          git push origin data
         fi
         
-        # 确保必要的目录存在
+        # 从临时目录恢复数据文件 / Restore data files from temporary directory
+        # 确保目录存在 / Ensure directories exist
         mkdir -p data assets
-        touch .nojekyll
-        
-        # 从临时目录恢复数据文件
-        echo "恢复数据文件..."
         cp -r /tmp/data_files/data/* data/ 2>/dev/null || true
         cp /tmp/data_files/assets/file-list.txt assets/ 2>/dev/null || true
         
-        # 显示要添加的文件
-        echo "要添加的文件："
-        ls -la data/*.jsonl 2>/dev/null || echo "没有jsonl文件"
-        ls -la assets/file-list.txt 2>/dev/null || echo "没有file-list.txt"
-        
-        # 添加文件到git
-        git add .nojekyll
-        git add data/*.jsonl 2>/dev/null || true
+        # 只添加数据文件 / Only add data files
+        git add data/* 2>/dev/null || true
         git add assets/file-list.txt 2>/dev/null || true
         
-        # 检查是否有变更
-        if git status --porcelain | grep -q .; then
-          echo "有变更需要提交"
-          git commit -m "update: $today arXiv papers"
-          echo "✅ 提交成功"
+        # 检查是否有数据变更需要提交 / Check if there are data changes to commit
+        if git diff --staged --quiet; then
+          echo "没有数据变更需要提交 / No data changes to commit"
         else
-          echo "⚠️ 没有数据变更需要提交"
+          git commit -m "update: $today arXiv papers"
+          echo "数据变更已提交到 data 分支 / Data changes committed to data branch"
         fi
 
     - name: Push data changes to data branch
       if: steps.dedup_check.outputs.has_new_content == 'true'
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        echo "=== 推送数据到 data 分支 ==="
+        # 设置Git配置以处理自动合并 / Set Git config for automatic merging
+        git config pull.rebase true
+        git config rebase.autoStash true
         
-        # 显示当前状态
-        echo "当前分支: $(git branch --show-current)"
-        
-        # 设置推送配置
-        git config push.default current
-        
-        # 尝试推送（最多3次）
+        # 尝试推送数据变更到 data 分支 / Try to push data changes to data branch
         for i in {1..3}; do
-          echo "推送尝试 $i/3"
+          echo "推送数据变更尝试 $i / Push data changes attempt $i"
           if git push origin data; then
-            echo "✅ 推送成功"
-            
-            # 显示成功信息
-            echo "=== 数据访问URL ==="
-            echo "文件列表: https://raw.githubusercontent.com/FangXieLab/daily-arXiv-ai-enhanced/data/assets/file-list.txt"
-            echo "今日数据: https://raw.githubusercontent.com/FangXieLab/daily-arXiv-ai-enhanced/data/data/${today}_AI_enhanced_*.jsonl"
-            
+            echo "数据变更推送成功 / Data changes pushed successfully"
             break
           else
-            echo "推送失败，拉取最新变更..."
-            git pull origin data --rebase --no-edit || true
+            echo "推送失败，拉取最新变更... / Push failed, pulling latest changes..."
+            git pull origin data --no-edit || true
             if [ $i -eq 3 ]; then
-              echo "❌ 3次尝试后推送失败"
-              echo "可能是权限问题，检查GITHUB_TOKEN权限"
-              echo "仓库Settings → Actions → General → Workflow permissions"
-              echo "设置为'Read and write permissions'"
+              echo "3次尝试后推送失败 / Failed to push after 3 attempts"
               exit 1
             fi
           fi
         done
-        
-        echo "=== data分支操作完成 ==="
